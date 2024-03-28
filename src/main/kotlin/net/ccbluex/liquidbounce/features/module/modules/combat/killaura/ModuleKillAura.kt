@@ -356,7 +356,7 @@ object ModuleKillAura : Module("KillAura", Category.COMBAT) {
             }
 
             RotationManager.aimAt(
-                rotations.toAimPlan(spot.rotation, !ignoreOpenInventory),
+                rotations.toVecAimPlan(spot, !ignoreOpenInventory),
                 priority = Priority.IMPORTANT_FOR_USAGE_2,
                 provider = this@ModuleKillAura
             )

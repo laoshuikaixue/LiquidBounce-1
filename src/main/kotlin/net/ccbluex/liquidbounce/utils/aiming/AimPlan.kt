@@ -19,11 +19,12 @@
 package net.ccbluex.liquidbounce.utils.aiming
 
 import net.ccbluex.liquidbounce.config.NamedChoice
+import net.ccbluex.liquidbounce.utils.client.chat
 import net.ccbluex.liquidbounce.utils.client.mc
+import net.ccbluex.liquidbounce.utils.client.player
 import net.ccbluex.liquidbounce.utils.entity.rotation
 import net.ccbluex.liquidbounce.utils.kotlin.random
 import kotlin.math.abs
-import kotlin.math.exp
 import kotlin.math.hypot
 
 /**
@@ -34,7 +35,7 @@ import kotlin.math.hypot
  * @param smootherMode The mode of the smoother.
  * @param baseTurnSpeed The base turn speed of the smoother.
  */
-class AimPlan(
+open class AimPlan(
     val rotation: Rotation,
     smootherMode: SmootherMode,
     baseTurnSpeed: ClosedFloatingPointRange<Float>,
@@ -52,7 +53,7 @@ class AimPlan(
     val changeLook: Boolean
 ) {
 
-    private val angleSmooth: AngleSmooth = AngleSmooth(smootherMode, baseTurnSpeed)
+    protected val angleSmooth: AngleSmooth = AngleSmooth(smootherMode, baseTurnSpeed)
 
     /**
      * Calculates the next rotation to aim at.
@@ -61,7 +62,7 @@ class AimPlan(
      *
      * We might even return null if we do not want to aim at anything yet.
      */
-    fun nextRotation(fromRotation: Rotation, isResetting: Boolean): Rotation {
+    open fun nextRotation(fromRotation: Rotation, isResetting: Boolean): Rotation {
         if (isResetting) {
             return angleSmooth.limitAngleChange(fromRotation, mc.player!!.rotation)
         }
@@ -69,6 +70,34 @@ class AimPlan(
         return angleSmooth.limitAngleChange(fromRotation, rotation)
     }
 
+}
+
+class PointAimPlan(
+    val vecRotation: VecRotation,
+    smootherMode: SmootherMode,
+    baseTurnSpeed: ClosedFloatingPointRange<Float>,
+    ticksUntilReset: Int,
+    resetThreshold: Float,
+    considerInventory: Boolean,
+    applyVelocityFix: Boolean,
+    changeLook: Boolean
+) : AimPlan(
+    vecRotation.rotation,
+    smootherMode,
+    baseTurnSpeed,
+    ticksUntilReset,
+    resetThreshold,
+    considerInventory,
+    applyVelocityFix,
+    changeLook
+) {
+    override fun nextRotation(fromRotation: Rotation, isResetting: Boolean): Rotation {
+        if (isResetting) {
+            return angleSmooth.limitAngleChange(fromRotation, mc.player!!.rotation)
+        }
+
+        return angleSmooth.limitAngleChange(fromRotation, rotation, player.pos.distanceTo(vecRotation.vec).toFloat())
+    }
 }
 
 enum class SmootherMode(override val choiceName: String) : NamedChoice {
@@ -81,17 +110,18 @@ enum class SmootherMode(override val choiceName: String) : NamedChoice {
  */
 class AngleSmooth(val mode: SmootherMode, private val baseTurnSpeed: ClosedFloatingPointRange<Float>) {
 
-    fun limitAngleChange(currentRotation: Rotation, targetRotation: Rotation): Rotation {
+    fun limitAngleChange(currentRotation: Rotation, targetRotation: Rotation, distance: Float): Rotation {
         val yawDifference = RotationManager.angleDifference(targetRotation.yaw, currentRotation.yaw)
         val pitchDifference = RotationManager.angleDifference(targetRotation.pitch, currentRotation.pitch)
 
         val rotationDifference = hypot(abs(yawDifference), abs(pitchDifference))
 
+        val factor = computeFactor(rotationDifference, distance)
+        chat(factor.toString())
         val (factorH, factorV) = when (mode) {
             SmootherMode.LINEAR ->
                 baseTurnSpeed.random().toFloat() to baseTurnSpeed.random().toFloat()
-            SmootherMode.RELATIVE ->
-                computeFactor(abs(yawDifference)) to computeFactor(abs(pitchDifference))
+            SmootherMode.RELATIVE -> factor to factor
         }
 
         val straightLineYaw = abs(yawDifference / rotationDifference) * factorH
@@ -103,22 +133,53 @@ class AngleSmooth(val mode: SmootherMode, private val baseTurnSpeed: ClosedFloat
         )
     }
 
-    private fun computeFactor(rotationDifference: Float): Float {
-        val turnSpeed = baseTurnSpeed.random().toFloat()
+    fun limitAngleChange(currentRotation: Rotation, targetRotation: Rotation): Rotation {
+        val yawDifference = RotationManager.angleDifference(targetRotation.yaw, currentRotation.yaw)
+        val pitchDifference = RotationManager.angleDifference(targetRotation.pitch, currentRotation.pitch)
 
-        // Scale the rotation difference to fit within a reasonable range
-        val scaledDifference = rotationDifference / 120f
+        val rotationDifference = hypot(abs(yawDifference), abs(pitchDifference))
 
-        val steepness = 10f
-        val midpoint = 0.3f
+        val (factorH, factorV) = when (mode) {
+            SmootherMode.LINEAR ->
+                baseTurnSpeed.random().toFloat() to baseTurnSpeed.random().toFloat()
+            SmootherMode.RELATIVE ->
+                computeFactor(abs(yawDifference), 0f) to computeFactor(abs(pitchDifference), 0f)
+        }
 
-        // Compute the sigmoid function
-        val sigmoid = 1 / (1 + exp((-steepness * (scaledDifference - midpoint)).toDouble()))
+        val straightLineYaw = abs(yawDifference / rotationDifference) * factorH
+        val straightLinePitch = abs(pitchDifference / rotationDifference) * factorV
 
-        // Interpolate sigmoid value to fit within the range of turnSpeed
-        val interpolatedSpeed = sigmoid * turnSpeed
+        return Rotation(
+            currentRotation.yaw + yawDifference.coerceIn(-straightLineYaw, straightLineYaw),
+            currentRotation.pitch + pitchDifference.coerceIn(-straightLinePitch, straightLinePitch)
+        )
+    }
 
-        return interpolatedSpeed.toFloat()
+    companion object {
+
+        const val COEF_DISTANCE: Float = -1.393f
+        const val COEF_DIFFERENCE: Float = 0.051f
+        const val INTERCEPT: Float = 11.988f
+
+        // Based on analysis for scenarios with much higher turn speeds
+        const val HIGH_TURN_SPEED_DISTANCE_THRESHOLD: Float = 2.82f // Average Distance for high turn speed
+        const val HIGH_TURN_SPEED_DIFFERENCE_THRESHOLD: Float = 61.34f // Average Difference for high turn speed
+
+        // Adjustment factor based on analysis for quick turning scenarios
+        const val HIGH_TURN_SPEED_ADJUSTMENT_FACTOR: Float = 2.5f
+    }
+
+    private fun computeFactor(difference: Float, distance: Float): Float {
+        val baseTurnSpeed = COEF_DISTANCE * distance + COEF_DIFFERENCE * difference + INTERCEPT
+
+        // Check if the scenario potentially leads to a much higher turn speed
+        if (distance <= HIGH_TURN_SPEED_DISTANCE_THRESHOLD && difference >= HIGH_TURN_SPEED_DIFFERENCE_THRESHOLD) {
+            // Apply an adjustment factor to simulate the observed significant turn speed increase
+            return baseTurnSpeed * HIGH_TURN_SPEED_ADJUSTMENT_FACTOR
+        }
+
+        // fix formula to not return negative values
+        return abs(baseTurnSpeed)
     }
 
 }

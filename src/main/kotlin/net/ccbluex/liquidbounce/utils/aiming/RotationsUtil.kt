@@ -64,6 +64,10 @@ open class RotationsConfigurable(
     private val ticksUntilReset by int("TicksUntilReset", 5, 1..30, "ticks")
     private val changeLook by boolean("ChangeLook", changeLook)
 
+    fun toVecAimPlan(rotation: VecRotation, considerInventory: Boolean = false) = PointAimPlan(
+        rotation, smoothMode, turnSpeed, ticksUntilReset, resetThreshold, considerInventory, fixVelocity, changeLook
+    )
+
     fun toAimPlan(rotation: Rotation, considerInventory: Boolean = false) = AimPlan(
         rotation, smoothMode, turnSpeed, ticksUntilReset, resetThreshold, considerInventory, fixVelocity, changeLook
     )
