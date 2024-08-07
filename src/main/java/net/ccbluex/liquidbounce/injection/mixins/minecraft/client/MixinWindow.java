@@ -49,34 +49,6 @@ public class MixinWindow {
     private long handle;
 
     /**
-     * Set the window icon to our client icon.
-     *
-     * @return modified game icon
-     */
-    @Redirect(method = "setIcon", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/util/Icons;getIcons(Lnet/minecraft/resource/ResourcePack;)Ljava/util/List;"))
-    private List<InputSupplier<InputStream>> setupIcon(Icons instance, ResourcePack resourcePack) throws IOException {
-        if (HideAppearance.INSTANCE.isHidingNow()) {
-            return instance.getIcons(resourcePack);
-        }
-
-        LiquidBounce.INSTANCE.getLogger().debug("Loading client icons");
-
-        // Find client icons
-        final InputStream stream16 = LiquidBounce.class.getResourceAsStream("/assets/liquidbounce/icon_16x16.png");
-        final InputStream stream32 = LiquidBounce.class.getResourceAsStream("/assets/liquidbounce/icon_32x32.png");
-
-        // In case one of the icons was not found
-        if (stream16 == null || stream32 == null) {
-            LiquidBounce.INSTANCE.getLogger().error("Unable to find client icons.");
-
-            // Load default icons
-            return instance.getIcons(resourcePack);
-        }
-
-        return List.of(() -> stream16, () -> stream32);
-    }
-
-    /**
      * Hook window resize
      */
     @Inject(method = "onWindowSizeChanged", at = @At("RETURN"))
